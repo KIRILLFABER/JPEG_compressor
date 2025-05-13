@@ -39,6 +39,17 @@ def downsampling(chanel, factor = 2):
     return downsampled
 
 
+import numpy as np
+
+def upsampling(channel, factor=2):
+    h, w = channel.shape
+    upsampled = np.zeros((h * factor, w * factor), dtype=channel.dtype)
+    for i in range(h):
+        for j in range(w):
+            upsampled[i*factor : (i+1)*factor, j*factor : (j+1)*factor] = channel[i, j]
+    
+    return upsampled
+
 def split_into_blocks(channel, block_size=8, fill_value=0):
     h, w = channel.shape
     n_blocks_h = math.ceil(h / block_size)
@@ -253,78 +264,129 @@ def calculate_size(value):
 def huffman_encode_ac(rle_pairs, huffman_table):
     bitstream = ""
     for run, value in rle_pairs:
-        if (run, value) == (0, 0):  # EOB
+        if (run, value) == (0, 0):  # EOB (End of Block)
             bitstream += huffman_table[(0, 0)]
             break
-        size = 0 if value == 0 else max(1, int(math.log2(abs(value))) + 1)
-        code = huffman_table[(run, size)]
-        bitstream += code
-        if value != 0:
+        
+        # Определяем размер значения (size)
+        if value == 0:
+            size = 0
+        else:
+            size = max(int(math.log2(abs(value))) + 1, 1)  # Не менее 1 бита
+        
+        # Получаем код Хаффмана для (run, size)
+        try:
+            huffman_code = huffman_table[(run, size)]
+        except KeyError:
+            raise ValueError(f"Не найден код Хаффмана для (run={run}, size={size})")
+        
+        bitstream += huffman_code
+        
+        # Кодируем само значение (если не нулевое)
+        if size > 0:
             if value > 0:
                 bitstream += bin(value)[2:].zfill(size)
             else:
-                bitstream += bin((1 << size) + value - 1)[2:]
+                # Для отрицательных: two's complement
+                bitstream += bin((1 << size) + value)[2:].zfill(size)
+    
     return bitstream
 
+
 def huffman_decode_ac(bitstream, huffman_table, max_coeffs=63):
-    inv_huffman_table = {v: k for k, v in huffman_table.items()}
+    inv_table = {v: k for k, v in huffman_table.items()}
     rle_pairs = []
     i = 0
     n = len(bitstream)
-    bits_consumed = 0
-
+    
     while i < n and len(rle_pairs) < max_coeffs:
+        # Ищем код Хаффмана
         code = ""
         found = None
-        while i < n and found is None:
-            code += bitstream[i]
-            i += 1
-            found = inv_huffman_table.get(code)
+        for bit in bitstream[i:]:
+            code += bit
+            if code in inv_table:
+                found = inv_table[code]
+                break
+        
+        if found is None:
+            raise ValueError(f"Неверный код Хаффмана: {code}")
         
         run, size = found
-        bits_consumed += len(code) 
-
+        i += len(code)
+        
+        # Обработка EOB
         if (run, size) == (0, 0):
             rle_pairs.append((0, 0))
             break
+        
+        # Декодирование значения
         value = 0
         if size > 0:
             if i + size > n:
-                raise ValueError("Неверный битовый поток: недостаточно битов для значения")
+                raise ValueError("Недостаточно битов для значения")
             
             value_bits = bitstream[i:i+size]
             i += size
-            bits_consumed += size
-
-            if value_bits[0] == '1':
-                value = int(value_bits, 2)
-            else:
-                value = int(value_bits, 2) - (1 << size) + 1
-
+            
+            # Декодирование с учетом знака
+            value = int(value_bits, 2)
+            if value < (1 << (size - 1)):  # Если старший бит не установлен
+                value -= (1 << size) - 1
+        
         rle_pairs.append((run, value))
+    
+    return rle_pairs, i
 
-    return rle_pairs, bits_consumed
 
 
+import math
+
+def huffman_encode_dc(dc, prev_dc, huffman_table):
+    dc_diff = dc - prev_dc
+    if dc_diff == 0:
+        dc_size = 0
+    else:
+        dc_size = max(int(math.log2(abs(dc_diff))) + 1, 1)  # Не менее 1 бита
+    
+    dc_code = huffman_table[dc_size]
+    
+    if dc_size > 0:
+        if dc_diff >= 0:
+            dc_code += bin(dc_diff)[2:].zfill(dc_size)
+        else:
+            # Modified two's complement для JPEG
+            dc_code += bin((1 << dc_size) + dc_diff - 1)[2:].zfill(dc_size)
+    
+    return dc_code, dc
 
 def huffman_decode_dc(bitstream, huffman_table):
     inv_table = {v: k for k, v in huffman_table.items()}
     code = ''
+    
     for i, bit in enumerate(bitstream):
         code += bit
         if code in inv_table:
             size = inv_table[code]
             if size == 0:
                 return 0, i + 1
-            value_bits = bitstream[i+1:i+1+size]
-            if len(value_bits) < size:
+            
+            if i + 1 + size > len(bitstream):
                 raise ValueError("Недостаточно битов для DC значения")
+            
+            value_bits = bitstream[i+1:i+1+size]
             value = int(value_bits, 2)
-            if value_bits[0] == '0':
-                value -= (1 << size) - 1
+            
+            # Modified two's complement декодирование
+            if value_bits[0] == '1':  # Положительное
+                pass
+            else:  # Отрицательное
+                value = -((1 << size) - value - 1)
+            
             return value, i + 1 + size
-    raise ValueError("Invalid DC Huffman code")
     
+    raise ValueError("Неверный код Хаффмана для DC")
+
 
 def pack_to_bytes(bitstream):
     pad_len = (8 - len(bitstream) % 8) % 8
