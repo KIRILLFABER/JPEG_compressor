@@ -20,7 +20,7 @@ def compress(im, quality = 50):
     y, Cb, Cr = func.RGB_to_YCbCr(im)
     Cb = func.downsampling(Cb)
     Cr = func.downsampling(Cr)
-    print(Cb.shape)
+    print(func.upsampling(Cb).shape)
     y_blocks = func.split_into_blocks(y)
     Cb_blocks = func.split_into_blocks(Cb)
     Cr_blocks = func.split_into_blocks(Cr)
@@ -110,6 +110,15 @@ def decompress(data, quality = 50):
             # if i == 0 and j == 0:
             #     return block
     
+
+
+
+
+
+
+
+    # Дописать Cb, Cr. Разобраться с их размерами 
+    # Есть проблема при декодировании AC коэффициентов, некоторые не совпадают. С DC все ок
     
     return y, DC
 

@@ -17,6 +17,20 @@ def RGB_to_YCbCr(im):
     return y, Cb, Cr
 
 
+def YCbCr_to_RGB(y, Cb, Cr):
+    Cb = Cb - 128
+    Cr = Cr - 128
+    
+    r = y + 1.402 * Cr
+    g = y - 0.34414 * Cb - 0.71414 * Cr
+    b = y + 1.772 * Cb
+    
+    r = np.clip(r, 0, 255).astype(np.uint8)
+    g = np.clip(g, 0, 255).astype(np.uint8)
+    b = np.clip(b, 0, 255).astype(np.uint8)
+    
+    return r, g, b
+
 def downsampling(chanel, factor = 2):
     h, w = chanel.shape
     pad_h = (4 - h % 4) % 4
@@ -39,9 +53,8 @@ def downsampling(chanel, factor = 2):
     return downsampled
 
 
-import numpy as np
 
-def upsampling(channel, factor=2):
+def upsampling(channel, factor=4):
     h, w = channel.shape
     upsampled = np.zeros((h * factor, w * factor), dtype=channel.dtype)
     for i in range(h):
