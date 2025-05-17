@@ -47,7 +47,7 @@ def downsampling(chanel, factor = 2):
     # print(chanel)
     # print('===============')
     # print(blocks)
-    downsampled = blocks.mean(axis=(2, 3)).astype(np.int32)
+    downsampled = blocks.mean(axis=(2, 3)).astype(np.uint8)
     # print(chanel.shape)
     # print(downsampled.shape)
     return downsampled
@@ -152,9 +152,9 @@ def idct_2d(dct_block):
 def quantize(block, q_matrix, quality=50):
     if quality <= 0:
         quality = 1
-    elif quality > 100:
+    elif quality >= 100:
         quality = 100
-    
+
     scale = 5000 / quality if quality < 50 else 200 - 2 * quality
     q = np.floor((q_matrix * scale + 50) / 100).clip(1, 255)
     return np.round(block / q).astype(np.int32)
@@ -162,12 +162,12 @@ def quantize(block, q_matrix, quality=50):
 def dequantize(block, q_matrix, quality=50):
     if quality <= 0:
         quality = 1
-    elif quality > 100:
+    elif quality >= 100:
         quality = 100
 
     scale = 5000 / quality if quality < 50 else 200 - 2 * quality
     q = np.floor((q_matrix * scale + 50) / 100).clip(1, 255)
-    return (block * q).astype(np.int32)
+    return (block * q)
 
 
 def zigzag(block):
@@ -274,6 +274,7 @@ def calculate_size(value):
         return 0
     return value.bit_length()
 
+
 def huffman_encode_ac(rle_pairs, huffman_table):
     bitstream = ""
     for run, value in rle_pairs:
@@ -300,11 +301,10 @@ def huffman_encode_ac(rle_pairs, huffman_table):
             if value > 0:
                 bitstream += bin(value)[2:].zfill(size)
             else:
-                # Для отрицательных: two's complement
-                bitstream += bin((1 << size) + value)[2:].zfill(size)
+                # Модифицированный two's complement для JPEG
+                bitstream += bin((1 << size) + value - 1)[2:].zfill(size)
     
     return bitstream
-
 
 def huffman_decode_ac(bitstream, huffman_table, max_coeffs=63):
     inv_table = {v: k for k, v in huffman_table.items()}
@@ -344,16 +344,14 @@ def huffman_decode_ac(bitstream, huffman_table, max_coeffs=63):
             
             # Декодирование с учетом знака
             value = int(value_bits, 2)
-            if value < (1 << (size - 1)):  # Если старший бит не установлен
-                value -= (1 << size) - 1
+            if value_bits[0] == '0':  # Отрицательное число
+                value = -( (1 << size) - value - 1 )
         
         rle_pairs.append((run, value))
     
     return rle_pairs, i
 
 
-
-import math
 
 def huffman_encode_dc(dc, prev_dc, huffman_table):
     dc_diff = dc - prev_dc
