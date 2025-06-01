@@ -1,6 +1,19 @@
 import numpy as np
 
 
+def create_dct_matrix(N = 8):
+    from math import sqrt, pi, cos
+    d = np.zeros((N, N))
+    for i in range(N):
+        for j in range(N):
+            if i == 0:
+                d[i][j] = sqrt(1/N) * cos(pi * i * (2*j + 1) / (2*N))
+            else:
+                d[i][j] = sqrt(2/N) * cos(pi * i * (2*j + 1) / (2*N))
+    return d
+DCT_MATRIX = create_dct_matrix()
+
+
 Q_Y = np.array([
     [16, 11, 10, 16, 24, 40, 51, 61],
     [12, 12, 14, 19, 26, 58, 60, 55],
@@ -38,7 +51,7 @@ HA_Y_DC_TABLE = {
     8: '111110',
     9: '1111110',
     10: '11111110',
-    11: '111111110'
+    11: '111111110',
 }
 
 HA_C_DC_TABLE = {
@@ -53,7 +66,7 @@ HA_C_DC_TABLE = {
     8: '11111110',
     9: '111111110',
     10: '1111111110',
-    11: '11111111110'
+    11: '11111111110',
 }
 
 HA_Y_AC_TABLE = {

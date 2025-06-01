@@ -2,25 +2,31 @@ from PIL import Image
 import matplotlib.pyplot as plt
 import numpy as np
 import math
+import scipy.fftpack as scp
+from config import *
 
 def getRGB(im):
     return im[:, :, 0].astype(np.float32), im[:, :, 1].astype(np.float32), im[:, :, 2].astype(np.float32)
 
 def RGB_to_YCbCr(im):
     r, g, b = getRGB(im)
+
     y = 0.299 * r + 0.587 * g + 0.114 * b
-    Cb = -0.1687 * r - 0.3313 * g - 0.0813 * b + 128
-    Cr = 0.5 * r - 0.4187 * g - 0.0813 * b + 128
-    y = np.clip(y, 0, 255).astype(np.int32)
-    Cb = np.clip(Cb, 0, 255).astype(np.int32)
-    Cr = np.clip(Cr, 0, 255).astype(np.int32)
+    Cb = -0.168736 * r - 0.331264 * g + 0.5 * b + 128
+    Cr = 0.5 * r - 0.418688 * g - 0.081312 * b + 128
+
+
+    y = np.clip(y, 0, 255).astype(np.uint8)
+    Cb = np.clip(Cb, 0, 255).astype(np.uint8)
+    Cr = np.clip(Cr, 0, 255).astype(np.uint8)
+    
     return y, Cb, Cr
 
 
 def YCbCr_to_RGB(y, Cb, Cr):
-    Cb = Cb - 128
-    Cr = Cr - 128
-    
+    y = y.astype(np.float32)
+    Cb = Cb.astype(np.float32) - 128.0
+    Cr = Cr.astype(np.float32) - 128.0
     r = y + 1.402 * Cr
     g = y - 0.34414 * Cb - 0.71414 * Cr
     b = y + 1.772 * Cb
@@ -31,7 +37,7 @@ def YCbCr_to_RGB(y, Cb, Cr):
     
     return r, g, b
 
-def downsampling(chanel, factor = 2):
+def downsampling(chanel, factor = 4):
     h, w = chanel.shape
     pad_h = (4 - h % 4) % 4
     pad_w = (4 - w % 4) % 4
@@ -63,7 +69,7 @@ def upsampling(channel, factor=4):
     
     return upsampled
 
-def split_into_blocks(channel, block_size=8, fill_value=0):
+def split_into_blocks(channel, block_size=8, fill_value=128):
     h, w = channel.shape
     n_blocks_h = math.ceil(h / block_size)
     n_blocks_w = math.ceil(w / block_size)
@@ -75,78 +81,21 @@ def split_into_blocks(channel, block_size=8, fill_value=0):
     for i in range(n_blocks_h):
         row_blocks = []
         for j in range(n_blocks_w):
-            block = padded_channel[
-                i * block_size : (i + 1) * block_size,
-                j * block_size : (j + 1) * block_size
-            ]
+            block = padded_channel[i * block_size : (i + 1) * block_size, j * block_size : (j + 1) * block_size]
             row_blocks.append(block)
         blocks.append(row_blocks)
     
     return blocks
 
+def dct_2d_s(x):    
+    return (DCT_MATRIX @ x) @ DCT_MATRIX.T
+    return np.dot(np.dot(DCT_MATRIX, x), DCT_MATRIX.T)
 
+def idct_2d_s(dct_block):
+    return (DCT_MATRIX.T @ dct_block) @ DCT_MATRIX
+    return np.dot(np.dot(DCT_MATRIX.T, dct_block), DCT_MATRIX)
 
-
-def dct_1d(x):
-    N = len(x)
-    X = np.zeros(N)
-    
-    for k in range(N):
-        sum_val = 0.0
-        ck = 1.0 / math.sqrt(2) if k == 0 else 1.0
-        
-        for n in range(N):
-            angle = (math.pi / N) * (n + 0.5) * k
-            sum_val += x[n] * math.cos(angle)
-        
-        X[k] = math.sqrt(2.0 / N) * ck * sum_val
-    
-    return X
-
-def idct_1d(X):
-    N = len(X)
-    x = np.zeros(N)
-    
-    for n in range(N):
-        sum_val = 0.0
-        
-        for k in range(N):
-            ck = 1.0 / math.sqrt(2) if k == 0 else 1.0
-            angle = (math.pi / N) * (n + 0.5) * k
-            sum_val += ck * X[k] * math.cos(angle)
-        
-        x[n] = math.sqrt(2.0 / N) * sum_val
-    
-    return x
-
-def dct_2d(block):
-    N = block.shape[0]
-    dct_block = np.zeros((N, N))
-    for i in range(N):
-        dct_block[i, :] = dct_1d(block[i, :])
-    for j in range(N):
-        dct_block[:, j] = dct_1d(dct_block[:, j])
-    
-    return dct_block
-
-def idct_2d(dct_block):
-    N = dct_block.shape[0]
-    block = np.zeros((N, N))
-    for j in range(N):
-        block[:, j] = idct_1d(dct_block[:, j])
-    for i in range(N):
-        block[i, :] = idct_1d(block[i, :])
-    
-    return block
-
-
-
-
-
-
-
-
-
+                       
 
 
 def quantize(block, q_matrix, quality=50):
@@ -154,26 +103,37 @@ def quantize(block, q_matrix, quality=50):
         quality = 1
     elif quality >= 100:
         quality = 100
-
+        return block
     scale = 5000 / quality if quality < 50 else 200 - 2 * quality
     q = np.floor((q_matrix * scale + 50) / 100).clip(1, 255)
-    return np.round(block / q).astype(np.int32)
+    quantized_block = np.round(block / q)
+    return quantized_block
 
 def dequantize(block, q_matrix, quality=50):
     if quality <= 0:
         quality = 1
     elif quality >= 100:
         quality = 100
+        return block
 
     scale = 5000 / quality if quality < 50 else 200 - 2 * quality
     q = np.floor((q_matrix * scale + 50) / 100).clip(1, 255)
-    return (block * q)
-
+    dequantized_block = block * q
+    return dequantized_block
 
 def zigzag(block):
-    return np.concatenate([np.diagonal(block[::-1,:], i)[::(2*(i % 2)-1)] 
-                         for i in range(1-block.shape[0], block.shape[0])])
-
+    zigzag_order = [
+        0,  1,  8, 16,  9,  2,  3, 10,
+        17, 24, 32, 25, 18, 11,  4,  5,
+        12, 19, 26, 33, 40, 48, 41, 34,
+        27, 20, 13,  6,  7, 14, 21, 28,
+        35, 42, 49, 56, 57, 50, 43, 36,
+        29, 22, 15, 23, 30, 37, 44, 51,
+        58, 59, 52, 45, 38, 31, 39, 46,
+        53, 60, 61, 54, 47, 55, 62, 63
+    ]
+    flat_block = block.flatten()
+    return np.array([flat_block[i] for i in zigzag_order])
 
 def rle_ac(ac_coeffs):
     rle = []
@@ -253,22 +213,6 @@ def inverse_zigzag(zigzag_data, block_size=8):
 
 
 
-
-def zigzag(block):
-    zigzag_order = [
-        0,  1,  8, 16,  9,  2,  3, 10,
-        17, 24, 32, 25, 18, 11,  4,  5,
-        12, 19, 26, 33, 40, 48, 41, 34,
-        27, 20, 13,  6,  7, 14, 21, 28,
-        35, 42, 49, 56, 57, 50, 43, 36,
-        29, 22, 15, 23, 30, 37, 44, 51,
-        58, 59, 52, 45, 38, 31, 39, 46,
-        53, 60, 61, 54, 47, 55, 62, 63
-    ]
-    flat_block = block.flatten()
-    return [flat_block[i] for i in zigzag_order]
-
-
 def calculate_size(value):
     if value == 0:
         return 0
@@ -276,32 +220,26 @@ def calculate_size(value):
 
 
 def huffman_encode_ac(rle_pairs, huffman_table):
+    rle_pairs = np.array(rle_pairs).astype(np.int32)
     bitstream = ""
     for run, value in rle_pairs:
-        if (run, value) == (0, 0):  # EOB (End of Block)
+        if (run, value) == (0, 0):
             bitstream += huffman_table[(0, 0)]
             break
-        
-        # Определяем размер значения (size)
         if value == 0:
             size = 0
         else:
-            size = max(int(math.log2(abs(value))) + 1, 1)  # Не менее 1 бита
+            size = int(value).bit_length() if value != 0 else 0
         
-        # Получаем код Хаффмана для (run, size)
         try:
             huffman_code = huffman_table[(run, size)]
         except KeyError:
-            raise ValueError(f"Не найден код Хаффмана для (run={run}, size={size})")
-        
+            raise ValueError(f"error (run={run}, size={size})")
         bitstream += huffman_code
-        
-        # Кодируем само значение (если не нулевое)
         if size > 0:
             if value > 0:
                 bitstream += bin(value)[2:].zfill(size)
             else:
-                # Модифицированный two's complement для JPEG
                 bitstream += bin((1 << size) + value - 1)[2:].zfill(size)
     
     return bitstream
@@ -313,7 +251,6 @@ def huffman_decode_ac(bitstream, huffman_table, max_coeffs=63):
     n = len(bitstream)
     
     while i < n and len(rle_pairs) < max_coeffs:
-        # Ищем код Хаффмана
         code = ""
         found = None
         for bit in bitstream[i:]:
@@ -321,19 +258,13 @@ def huffman_decode_ac(bitstream, huffman_table, max_coeffs=63):
             if code in inv_table:
                 found = inv_table[code]
                 break
-        
         if found is None:
-            raise ValueError(f"Неверный код Хаффмана: {code}")
-        
+            raise ValueError(f"error decode: {code}")
         run, size = found
         i += len(code)
-        
-        # Обработка EOB
         if (run, size) == (0, 0):
             rle_pairs.append((0, 0))
             break
-        
-        # Декодирование значения
         value = 0
         if size > 0:
             if i + size > n:
@@ -342,9 +273,8 @@ def huffman_decode_ac(bitstream, huffman_table, max_coeffs=63):
             value_bits = bitstream[i:i+size]
             i += size
             
-            # Декодирование с учетом знака
             value = int(value_bits, 2)
-            if value_bits[0] == '0':  # Отрицательное число
+            if value_bits[0] == '0':
                 value = -( (1 << size) - value - 1 )
         
         rle_pairs.append((run, value))
@@ -355,10 +285,11 @@ def huffman_decode_ac(bitstream, huffman_table, max_coeffs=63):
 
 def huffman_encode_dc(dc, prev_dc, huffman_table):
     dc_diff = dc - prev_dc
+    dc_diff = dc_diff.astype(np.int32)
     if dc_diff == 0:
         dc_size = 0
     else:
-        dc_size = max(int(math.log2(abs(dc_diff))) + 1, 1)  # Не менее 1 бита
+        dc_size = max(int(math.log2(abs(dc_diff))) + 1, 1)
     
     dc_code = huffman_table[dc_size]
     
@@ -366,7 +297,6 @@ def huffman_encode_dc(dc, prev_dc, huffman_table):
         if dc_diff >= 0:
             dc_code += bin(dc_diff)[2:].zfill(dc_size)
         else:
-            # Modified two's complement для JPEG
             dc_code += bin((1 << dc_size) + dc_diff - 1)[2:].zfill(dc_size)
     
     return dc_code, dc
@@ -387,16 +317,15 @@ def huffman_decode_dc(bitstream, huffman_table):
             
             value_bits = bitstream[i+1:i+1+size]
             value = int(value_bits, 2)
-            
-            # Modified two's complement декодирование
-            if value_bits[0] == '1':  # Положительное
+
+            if value_bits[0] == '1':
                 pass
-            else:  # Отрицательное
+            else:
                 value = -((1 << size) - value - 1)
             
             return value, i + 1 + size
     
-    raise ValueError("Неверный код Хаффмана для DC")
+    raise ValueError(f"error decode dc: {code}")
 
 
 def pack_to_bytes(bitstream):
@@ -409,29 +338,3 @@ def pack_to_bytes(bitstream):
     
     return data, pad_len
 
-
-im_RGB = Image.open("1.jpg")
-size = im_RGB.size
-im_RGB = np.array(im_RGB)
-y, Cb, Cr = RGB_to_YCbCr(im_RGB)
-
-
-
-
-# y, Cb, Cr = RGB_to_YCbCr(im_RGB)
-# print(im_RGB)
-# r, g, b = getRGB(im_RGB)
-# fig, ax = plt.subplots()
-# print('==========', r)
-
-
-
-
-
-# tmp_chanel = Image.new("L", size, 128)
-# y = Image.fromarray(y)
-# Cb = Image.fromarray(Cb)
-# Cr = Image.fromarray(Cr)
-# im_y = Image.merge("YCbCr", (tmp_chanel, tmp_chanel, Cr)).convert('RGB')
-# ax.imshow(im_y)
-# plt.show()
